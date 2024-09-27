@@ -7,112 +7,115 @@ import numpy as np
 from PIL import Image
 from segment_anything import SamPredictor, sam_model_registry
 
-class MyImage():
+class ImageFileLoader():
     
     """Open image file"""
-    def __init__(self, folder_path, img_name, trgt_ext):
-        self.folder_path = folder_path
-        self.img_name = img_name
-        self.img_path = os.path.join(self.folder_path, self.img_name)
-        self.img_basename, self.img_ext_src = os.path.splitext(self.img_name)
-        self.img_ext_check = cv2.haveImageWriter(self.img_name)
-        self.img_ext_trgt = trgt_ext
-        # self.img_ext_check = cv2.haveImageReader(self.img_name)
-        self.img = None
+    def __init__(self, img_files_dir, img_file_name):
+        self.img_files_dir = img_files_dir
+        self.img_file_name = img_file_name
+        self.img_file_path = os.path.join(self.img_files_dir, self.img_file_name)
+        self.img_file_basename, self.img_file_ext = os.path.splitext(self.img_file_name)
+        self.img_file_ext_check = cv2.haveImageWriter(self.img_file_name)
+        self.img_array = None
     
-    def open_img(self):
-        if self.img_ext_check == False:
-            self.img = self.convert_img()
-            self.img = cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB)
-        else:
-            self.img = cv2.imread(self.img_path)
-            self.img = cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB)
-        return self.img
-    
-    def convert_img(self):
-
-        self.img_ext_src = self.img_ext_src.lower()
-
-        if self.img_ext_src == '.heic':
+    def open_img_file(self):
+        if self.img_file_ext.lower() == ".heic":
             
-            # Open the HEIC file using pyheif
-            with open(self.img_path, 'rb') as heic_file:
-                heic_file = pillow_heif.open_heif(heic_file)
-                pil_img = Image.frombytes(
-                    heic_file.mode,
-                    heic_file.size,
-                    heic_file.data,
-                    'raw',
-                    heic_file.mode,
-                    heic_file.stride
-                )
-            
-            # Convert the PIL image to JPEG in memory
-            with io.BytesIO() as output:
-                pil_img.save(output, format=self.img_ext_trgt)
-                jpeg_data = output.getvalue()
+            pillow_heif.register_heif_opener()
 
-            # Load the JPEG data into OpenCV format
-            self.img = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
+            with Image.open(self.img_file_path) as img_file:
+                self.img_array = np.asarray(img_file)
+
+        #     with open(self.img_path, 'rb') as heic_file:
+        #         heif_file = pillow_heif.open_heif(heic_file)
+        #         pil_img = Image.frombytes(
+        #             heif_file.mode,
+        #             heif_file.size,
+        #             heif_file.data,
+        #             'raw',
+        #             heif_file.mode,
+        #             heif_file.stride
+        #         )
+
+        #     # Convert the PIL image to JPEG in memory
+        #     with io.BytesIO() as output:
+        #         pil_img.save(output, format='JPEG')
+        #         jpeg_data = output.getvalue()
+
+        #     # Load the JPEG data into OpenCV format
+        #     self.img = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
+        #     self.img = cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB)
         
+        elif self.img_file_ext_check:
+            self.img_array = cv2.imread(self.img_file_path)
+
         else:
-            raise ValueError("Not supported file extension to convert")
+            raise Exception("Not supported image extension")
 
-        return self.img
+        return self.img_array
     
-    def get_img_path(self):
-        return self.img_path
+    def get_img_file_path(self):
+        return self.img_file_path
 
-    def get_img_basename(self):
-        return self.img_basename
+    def get_img_file_basename(self):
+        return self.img_file_basename
 
-    def get_img_ext_src(self):
-        return self.img_ext_src
+    def get_img_file_ext(self):
+        return self.img_file_ext
+
+class MyImage():
+
+    def __init__(self, img_array):
+        self.img_array = img_array
+        self.img_h = self.img_array.shape[0]
+        self.img_w = self.img_array.shape[1]
+        self.img_c = self.img_array.shape[2] if len(self.img_array.shape) == 3 else 1
+        self.img_AR = self.img_h / self.img_w
+        self.img_size = np.size(self.img_array) / self.img_c
     
-    def get_img_ext_trgt(self):
-        return self.img_ext_trgt
-
-    def get_img_ext_check(self):
-        return self.img_ext_check
-
-class MyImageShape():
-
-    def __init__(self, img):
-        self.orgnl_img = img
-        self.orgnl_img_h = self.orgnl_img.shape[0]
-        self.orgnl_img_w = self.orgnl_img.shape[1]
-        self.orgnl_img_AR = self.orgnl_img_h / self.orgnl_img_w
-
-        if self.orgnl_img_AR < 1:
-            self.orgnl_img = cv2.rotate(self.orgnl_img, cv2.ROTATE_90_CLOCKWISE)
+    def update_image_properties(self):
+        self.img_h = self.img_array.shape[0]
+        self.img_w = self.img_array.shape[1]
+        self.img_c = self.img_array.shape[2] if len(self.img_array.shape) == 3 else 1
+        self.img_AR = self.img_h / self.img_w
+        self.img_size = np.size(self.img_array) / self.img_c
     
-    def get_orgnl_img_height(self):
-        return  self.orgnl_img_h
-    
-    def get_orgnl_img_width(self):
-        return  self.orgnl_img_w
-    
-    def get_orgnl_img_AR(self):
-        return self.orgnl_img_AR
+    def rotate_img(self):
+        self.img_array = cv2.rotate(self.img_array, cv2.ROTATE_90_CLOCKWISE)
+        self.update_image_properties()
 
-class MyImageResizer(MyImageShape):
+    def get_img_height(self):
+        return  self.img_h
+    
+    def get_img_width(self):
+        return  self.img_w
+    
+    def get_img_AR(self):
+        return self.img_AR
+    
+    def get_img_size(self):
+        return self.img_size
+    
+    def get_img_array(self):
+        return self.img_array
+    
+class ImageResizer():
     
     """Resizes image"""
     def __init__(self, img, trgt_height):
-        super().__init__(img)
+        
+        self.img = img
+        self.img_array = self.img.get_img_array()
         self.rszd_img_h = trgt_height
-        self.scale_ratio = self.rszd_img_h / self.orgnl_img_h
-        self.rszd_img_w = int(self.orgnl_img_w * self.scale_ratio)
+        self.scale_ratio = round(self.rszd_img_h / self.img.get_img_height(), 3)
+        self.rszd_img_w = int(self.img.get_img_width() * self.scale_ratio)
         self.inverse_scale_ratio = 1 / self.scale_ratio
 
-        if self.orgnl_img_AR < 1:
-            self.orgnl_img = cv2.rotate(self.orgnl_img, cv2.ROTATE_90_CLOCKWISE)
-            self.rszd_img = cv2.resize(self.orgnl_img, (self.rszd_img_w, self.rszd_img_h), interpolation = cv2.INTER_AREA)
-        else:
-            self.rszd_img = cv2.resize(self.orgnl_img, (self.rszd_img_w, self.rszd_img_h), interpolation = cv2.INTER_AREA)
+        self.rszd_img = None
 
     def get_rszd_img(self):
-        return self.rszd_img
+        self.rszd_img = cv2.resize(self.img_array, (self.rszd_img_w, self.rszd_img_h), interpolation = cv2.INTER_LINEAR)
+        return MyImage(self.rszd_img)
     
     def get_inverse_scale_ratio(self):
         return self.inverse_scale_ratio
@@ -120,8 +123,8 @@ class MyImageResizer(MyImageShape):
 class ActivateModel():
 
     """Activate Segment Anything Model"""
-    def __init__(self, model_folder, model_files_names):
-        self.model_path = model_folder
+    def __init__(self, model_dir, model_files_names):
+        self.model_dir = model_dir
         self.model_files_names = model_files_names
     
     def activate_large_model(self):
@@ -129,7 +132,7 @@ class ActivateModel():
         model_name = "vit_h"
         
         if model_file_name in self.model_files_names:
-            model_path = os.path.join(self.model_path, model_file_name)
+            model_path = os.path.join(self.model_dir, model_file_name)
             sam = sam_model_registry[model_name](checkpoint=model_path)
         else:
             Exception("Checkpoint file for large model is missing in the folder")
@@ -148,7 +151,7 @@ class ActivateModel():
         
         return sam
 
-class ReceiptMask():
+class ObjectSegmentation():
 
     """Extract receipt mask"""
     def __init__(self, img, model, model_params):
@@ -180,11 +183,30 @@ class ReceiptMask():
         # Define the mask with the highest score
         max_score_idx = np.argmax(scores)
         masked_img = masks[max_score_idx]
-        masked_img = masked_img.astype(np.float32)
+        masked_img = masked_img.astype(np.uint8)
         
         return masked_img
 
-class ReceiptCorners():
+class ObjectDetection():
+    def __init__(self, img, inverse_scale_ratio):
+        self.img = img
+        self.inverse_scale_ratio = inverse_scale_ratio
+        self.bbox = None
+        self.scaled_bbox = None
+
+    def get_bbox(self):
+        pil_img = Image.fromarray(self.img)
+        self.bbox = pil_img.getbbox()
+        return self.bbox
+    
+    def get_scaled_bbox(self):
+        pil_img = Image.fromarray(self.img)
+        self.bbox = pil_img.getbbox()
+        self.scaled_bbox = tuple(round(point * self.inverse_scale_ratio) for point in self.bbox)
+        return self.scaled_bbox
+
+
+class ObjectCorners():
     def __init__(self, img, params):
         self.img = img
         self.block_size = params['blockSize']
@@ -206,14 +228,15 @@ class ReceiptCorners():
         
         return self.corner_points
 
-class ReceiptBbox():
+class ObjectDetectionCustom():
 
     def __init__(self, corner_points):
-
-        self.masked_img_height = masked_img.shape[0]
-        self.masked_img_width = masked_img.shape[1]
-        self.masked_img_height_cntr = masked_img.shape[0] / 2
-        self.masked_img_width_cntr = masked_img.shape[1] / 2
+        
+        self.image_shape = MyImage()
+        self.masked_img_height = self.image_shape.get_img_height()
+        self.masked_img_width = self.image_shape.get_img_width()
+        self.masked_img_height_cntr = self.masked_img_height / 2
+        self.masked_img_width_cntr = self.masked_img_width / 2
         
         self.corner_points = corner_points
         self.clustered_corner_points = {}
