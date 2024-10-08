@@ -1,58 +1,91 @@
 # class Image() 
-import cv2
-import pillow_heif
 import io
 import os
 import numpy as np
+import logging
+
 from PIL import Image
+import pillow_heif
+from scipy.ndimage import label
+import cv2
+
 from segment_anything import SamPredictor, sam_model_registry
 
-class ImageFileLoader():
+class BatchImageLoader():
+    
+    """Open image files"""
+
+    def __init__(self, source, source_type='directory'):
+        self.img_pil_objects = {}
+        self.img_files_extensions = {}
+        # self.img_file_ext_check = cv2.haveImageWriter(self.img_file_name)
+
+        if source_type == 'directory':
+            self.img_files_dir = source
+            self.img_files_names = os.listdir(self.img_files_dir)
+        
+        # Register HEIF opener
+        pillow_heif.register_heif_opener()
+        
+        # Load imgs
+        self.load_imgs()
+
+    def load_imgs(self):
+        count = 0
+        for img_file_name in self.img_files_names:
+            img_file_path = os.path.join(self.img_files_dir, img_file_name)
+            img_file_basename, img_file_ext = os.path.splitext(img_file_name)
+            self.img_files_extensions[img_file_basename] = img_file_ext
+            
+            try:
+                count += 1
+                pil_img = self._open_image_file(img_file_path)
+                self.img_pil_objects[img_file_basename] = pil_img
+
+            except Exception as e:
+                self.img_pil_objects[img_file_basename] = None
+                logging.error(f'Error opening {img_file_name}: {str(e)}')
+
+    def _open_image_file(self, img_file_path):
+
+        with open(img_file_path, "rb") as img_file:
+            
+            pil_img = Image.open(img_file)
+            pil_img.load()
+
+        return pil_img
+    
+    def get_loaded_imgs(self):
+        return self.img_pil_objects
+
+class SingleImageLoader():
     
     """Open image file"""
     def __init__(self, img_files_dir, img_file_name):
+        
         self.img_files_dir = img_files_dir
         self.img_file_name = img_file_name
         self.img_file_path = os.path.join(self.img_files_dir, self.img_file_name)
         self.img_file_basename, self.img_file_ext = os.path.splitext(self.img_file_name)
-        self.img_file_ext_check = cv2.haveImageWriter(self.img_file_name)
-        self.img_array = None
-    
-    def open_img_file(self):
-        if self.img_file_ext.lower() == ".heic":
-            
-            pillow_heif.register_heif_opener()
-
-            with Image.open(self.img_file_path) as img_file:
-                self.img_array = np.asarray(img_file)
-
-        #     with open(self.img_path, 'rb') as heic_file:
-        #         heif_file = pillow_heif.open_heif(heic_file)
-        #         pil_img = Image.frombytes(
-        #             heif_file.mode,
-        #             heif_file.size,
-        #             heif_file.data,
-        #             'raw',
-        #             heif_file.mode,
-        #             heif_file.stride
-        #         )
-
-        #     # Convert the PIL image to JPEG in memory
-        #     with io.BytesIO() as output:
-        #         pil_img.save(output, format='JPEG')
-        #         jpeg_data = output.getvalue()
-
-        #     # Load the JPEG data into OpenCV format
-        #     self.img = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
-        #     self.img = cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB)
+        self.pil_img = None
         
-        elif self.img_file_ext_check:
-            self.img_array = cv2.imread(self.img_file_path)
+        # Register HEIF opener
+        pillow_heif.register_heif_opener()
 
-        else:
-            raise Exception("Not supported image extension")
+        # Load image
+        self.load_img()
+    
+    def load_img(self):
+        
+        try:
+            with open(self.img_file_path, "rb") as img_file:
+                self.pil_img = Image.open(img_file)
+                self.pil_img.load()
 
-        return self.img_array
+        except Exception as e:
+                logging.error(f'Error opening {self.img_file_name}: {str(e)}')
+
+        return self.pil_img
     
     def get_img_file_path(self):
         return self.img_file_path
@@ -62,8 +95,13 @@ class ImageFileLoader():
 
     def get_img_file_ext(self):
         return self.img_file_ext
+    
+    def get_pil_img_obj(self):
+        return self.pil_img
 
 class MyImage():
+    
+    """Opens image"""
 
     def __init__(self, img_array):
         self.img_array = img_array
@@ -99,27 +137,126 @@ class MyImage():
     def get_img_array(self):
         return self.img_array
     
+    def get_img_copy_array(self):
+        return np.copy(self.img_array)
+    
 class ImageResizer():
     
     """Resizes image"""
-    def __init__(self, img, trgt_height):
+
+    def __init__(self, pil_img, trgt_height):
         
-        self.img = img
-        self.img_array = self.img.get_img_array()
+        self.img = pil_img
+        self.img_array = np.asarray(pil_img)
         self.rszd_img_h = trgt_height
-        self.scale_ratio = round(self.rszd_img_h / self.img.get_img_height(), 3)
-        self.rszd_img_w = int(self.img.get_img_width() * self.scale_ratio)
+        self.scale_ratio = round(self.rszd_img_h / pil_img.height, 3)
+        self.rszd_img_w = int(pil_img.width * self.scale_ratio)
         self.inverse_scale_ratio = 1 / self.scale_ratio
 
-        self.rszd_img = None
-
-    def get_rszd_img(self):
-        self.rszd_img = cv2.resize(self.img_array, (self.rszd_img_w, self.rszd_img_h), interpolation = cv2.INTER_LINEAR)
-        return MyImage(self.rszd_img)
+    def call(self):
+        rszd_img = cv2.resize(self.img_array, (self.rszd_img_w, self.rszd_img_h), interpolation = cv2.INTER_LINEAR)
+        pil_rszd_img = Image.fromarray(rszd_img)
+        return pil_rszd_img
     
     def get_inverse_scale_ratio(self):
         return self.inverse_scale_ratio
+
+class ImageSlicer():
     
+    '''Slices image with sliding window'''
+
+    def __init__(self, pil_img, silding_window_size):
+        
+        self.img = pil_img
+        self.img_array = np.asarray(pil_img)
+        self.img_w, self.img_h = pil_img.size
+        self.sliding_window_size = silding_window_size
+        self.img_slices = {}
+    
+    def call(self):
+        count = 0
+        for row in range(0, self.img_h-self.sliding_window_size, self.sliding_window_size):
+            for col in range(0, self.img_w-self.sliding_window_size, self.sliding_window_size):
+                count += 1
+                img_slice = self.img_array[row:row+self.sliding_window_size, col:col+self.sliding_window_size]
+                img_slice_coords = (col, row, col+self.sliding_window_size, row+self.sliding_window_size)
+                img_slice_intensity = int(np.mean(img_slice))
+                self.img_slices[count] = {}
+                self.img_slices[count]['slice'] = img_slice
+                self.img_slices[count]['slice_coordinates'] = img_slice_coords
+                self.img_slices[count]['slice_color_intensity'] = img_slice_intensity
+            
+        return self.img_slices
+
+class ImageIntensityMap():
+    def __init__(self, pil_img, slices_dict, percentile=80):
+        self.img = pil_img
+        self.slices_dict = slices_dict
+        self.percentile = percentile
+
+        self.slices = [item['slice'] for item in slices_dict.values()]
+        self.slices_intensity = [item['slice_color_intensity'] for item in slices_dict.values()]
+        self.slices_coordinates = [item['slice_coordinates'] for item in slices_dict.values()]
+
+    def get_clustered_slices(self):
+        clustered_slices, num_features = label(self.get_intensity_region())
+        cluster_ids = list(set(clustered_slices.flatten()))
+        
+        for ii in cluster_ids:
+            cond = clustered_slices==ii
+            cluster_size = sum(clustered_slices.flatten()==ii)
+            if cluster_size < 1500:
+                clustered_slices[cond] = 0
+        
+        pil_img = Image.fromarray(clustered_slices)
+
+        return pil_img
+
+    def get_intensity_region(self):
+
+        blank_gray = np.zeros((self.img.height, self.img.width), dtype = 'uint8')
+        self.intensity_threshold = np.percentile(self.slices_intensity, self.percentile)
+
+        for idx, slice in enumerate(self.slices):
+            slice_intensity = self.slices_intensity[idx]
+            top_left_x, top_left_y, bottom_right_x, bottom_right_y = self.slices_coordinates[idx]
+            if slice_intensity > self.intensity_threshold:
+                blank_gray[top_left_y:bottom_right_y, top_left_x:bottom_right_x] = np.ones((slice.shape[0], slice.shape[1]), dtype=int)
+        
+        return blank_gray
+    
+    def get_intensity_map(self):
+        blank_rgb = np.zeros((self.img.height, self.img.width, 3), dtype = 'uint8')
+        
+        for idx, slice in enumerate(self.slices):
+            slice_copy = np.copy(slice)
+            slice_intensity = self.slices_intensity[idx]
+            top_left_x, top_left_y, bottom_right_x, bottom_right_y = self.slices_coordinates[idx]
+            
+            # Make contour around the slice's borders
+            cv2.rectangle(slice_copy, (0, 0), (slice_copy.shape[1]-1, slice_copy.shape[0]-1), (0,255,0), 1)
+            
+            # Put the text with intensity on the slice
+            text = str(slice_intensity)
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.2
+            color = (113, 76, 232)
+            thickness = 1
+            org = (0, 9)
+            cv2.putText(slice_copy, text, org, font, font_scale, color, thickness)
+
+            # Fill in blank rgb image
+            blank_rgb[top_left_y:bottom_right_y, top_left_x:bottom_right_x] = slice_copy
+
+        return blank_rgb
+
+
+
+
+
+
+
+
 class ActivateModel():
 
     """Activate Segment Anything Model"""
@@ -204,6 +341,19 @@ class ObjectDetection():
         self.bbox = pil_img.getbbox()
         self.scaled_bbox = tuple(round(point * self.inverse_scale_ratio) for point in self.bbox)
         return self.scaled_bbox
+
+class ObjectCrop():
+    def __init__(self, img, bbox):
+        self.img = img
+        self.bbox = bbox
+        self.img_array = self.img.get_img_array()
+        self.croped_img_array = None
+    
+    def call(self):
+        pil_img = Image.fromarray(self.img_array)
+        self.croped_img_array = pil_img.crop(self.bbox)
+        return self.croped_img_array
+
 
 
 class ObjectCorners():
