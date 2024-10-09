@@ -3,6 +3,7 @@ import io
 import os
 import numpy as np
 import logging
+from collections import Counter
 
 from PIL import Image
 import pillow_heif
@@ -10,6 +11,8 @@ from scipy.ndimage import label
 import cv2
 
 from segment_anything import SamPredictor, sam_model_registry
+
+from rcpt_img_preprocessing.utils import *
 
 class BatchImageLoader():
     
@@ -188,7 +191,8 @@ class ImageSlicer():
             
         return self.img_slices
 
-class ImageIntensityMap():
+class ObjectSegmentation():
+    
     def __init__(self, pil_img, slices_dict, percentile=80):
         self.img = pil_img
         self.slices_dict = slices_dict
@@ -198,21 +202,46 @@ class ImageIntensityMap():
         self.slices_intensity = [item['slice_color_intensity'] for item in slices_dict.values()]
         self.slices_coordinates = [item['slice_coordinates'] for item in slices_dict.values()]
 
-    def get_clustered_slices(self):
-        clustered_slices, num_features = label(self.get_intensity_region())
-        cluster_ids = list(set(clustered_slices.flatten()))
-        
-        for ii in cluster_ids:
+        # self.selective_searchs_bboxes = None
+        # self.clusterization_bbox = None
+
+    def get_intersected_bboxes(self, iou_threshold=0.8):
+        intersected_bboxes = []
+        selective_searchs_bboxes = self.get_selective_search_bbox_proposal()
+        clusterization_bbox = self.get_clusterization_bbox_proposal()
+
+        for selective_searchs_bbox in selective_searchs_bboxes:
+            iou = bb_intersection_over_union(clusterization_bbox, selective_searchs_bbox)
+            if iou > iou_threshold:
+                intersected_bboxes.append(selective_searchs_bbox)
+        return intersected_bboxes
+
+    def get_selective_search_bbox_proposal(self):
+        ss = cv2.ximgproc.segmentation.createSelectiveSearchSegmentation()
+        ss.setBaseImage(np.asarray(self.img))
+        ss.switchToSelectiveSearchFast()
+        rects = ss.process()
+        selective_search_bboxes = [(rect[0], rect[1], rect[0]+rect[2], rect[1]+rect[3]) for rect in rects]
+
+        return selective_search_bboxes
+
+    def get_clusterization_bbox_proposal(self, cluster_threshold=2000):
+        clustered_slices, num_features = label(self._collect_intense_slices())
+        unique, counts = np.unique(clustered_slices, return_counts=True)
+        print(sorted(counts))
+
+        for ii in range(0, num_features+1):
             cond = clustered_slices==ii
             cluster_size = sum(clustered_slices.flatten()==ii)
-            if cluster_size < 1500:
+            if cluster_size < cluster_threshold:
                 clustered_slices[cond] = 0
         
         pil_img = Image.fromarray(clustered_slices)
+        clusterization_bbox = pil_img.getbbox()
 
-        return pil_img
+        return clusterization_bbox
 
-    def get_intensity_region(self):
+    def _collect_intense_slices(self):
 
         blank_gray = np.zeros((self.img.height, self.img.width), dtype = 'uint8')
         self.intensity_threshold = np.percentile(self.slices_intensity, self.percentile)
@@ -225,7 +254,7 @@ class ImageIntensityMap():
         
         return blank_gray
     
-    def get_intensity_map(self):
+    def get_img_intensity_map(self):
         blank_rgb = np.zeros((self.img.height, self.img.width, 3), dtype = 'uint8')
         
         for idx, slice in enumerate(self.slices):
@@ -288,41 +317,41 @@ class ActivateModel():
         
         return sam
 
-class ObjectSegmentation():
+# class ObjectSegmentation():
 
-    """Extract receipt mask"""
-    def __init__(self, img, model, model_params):
-        self.img = img
-        self.model = model
-        self.input_point = model_params['input_point']
-        self.input_label = model_params['input_label']
-        self.multimask_output = model_params['multimask_output']
+#     """Extract receipt mask"""
+#     def __init__(self, img, model, model_params):
+#         self.img = img
+#         self.model = model
+#         self.input_point = model_params['input_point']
+#         self.input_label = model_params['input_label']
+#         self.multimask_output = model_params['multimask_output']
     
-    def mask_receipt(self):
+#     def mask_receipt(self):
         
-        # Initiate SAM predictor
-        predictor = SamPredictor(self.model)
+#         # Initiate SAM predictor
+#         predictor = SamPredictor(self.model)
 
-        # Embed image
-        predictor.set_image(self.img)
+#         # Embed image
+#         predictor.set_image(self.img)
         
-        # Check input availability
-        if self.input_point is None:
-            raise ValueError('Input point has not been provided')
+#         # Check input availability
+#         if self.input_point is None:
+#             raise ValueError('Input point has not been provided')
         
-        # Segment image
-        masks, scores, logits = predictor.predict(
-            point_coords=self.input_point,
-            point_labels=self.input_label,
-            multimask_output=self.multimask_output
-        )
+#         # Segment image
+#         masks, scores, logits = predictor.predict(
+#             point_coords=self.input_point,
+#             point_labels=self.input_label,
+#             multimask_output=self.multimask_output
+#         )
 
-        # Define the mask with the highest score
-        max_score_idx = np.argmax(scores)
-        masked_img = masks[max_score_idx]
-        masked_img = masked_img.astype(np.uint8)
+#         # Define the mask with the highest score
+#         max_score_idx = np.argmax(scores)
+#         masked_img = masks[max_score_idx]
+#         masked_img = masked_img.astype(np.uint8)
         
-        return masked_img
+#         return masked_img
 
 class ObjectDetection():
     def __init__(self, img, inverse_scale_ratio):

@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from rcpt_img_preprocessing.helpers import SingleImageLoader, MyImage, ImageResizer, ImageSlicer, ImageIntensityMap
+from rcpt_img_preprocessing.helpers import SingleImageLoader, MyImage, ImageResizer, ImageSlicer, ObjectSegmentation
 from rcpt_img_preprocessing.utils import *
 from scipy.ndimage import label
 
@@ -7,8 +7,8 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 if __name__ == '__main__':
     # Folder with images
-    img_files_dir = r'C:\Users\dmitr\OneDrive\Desktop\1_img'
-    # img_files_dir = r'C:\Users\dmitr\OneDrive\Desktop\several_imgs'
+    # img_files_dir = r'C:\Users\dmitr\OneDrive\Desktop\1_img'
+    img_files_dir = r'C:\Users\dmitr\OneDrive\Desktop\several_imgs' 
     img_files_names = os.listdir(img_files_dir)
     
     # Folder with Segment Anything Model checkpoints
@@ -59,39 +59,18 @@ if __name__ == '__main__':
         slices_dict = img_slicer.call()
 
         # Get intensities map
-        intensity = ImageIntensityMap(rszd_img, slices_dict, percentile=80)
-        cluster = intensity.get_clustered_slices()
-        
-        # # Draw bbox around the biggest clusters
-        bboxA = cluster.getbbox()
+        segmentation = ObjectSegmentation(rszd_img, slices_dict, percentile=80)
+        best_bboxes = segmentation.get_intersected_bboxes()
+        pick = non_maximum_suppression(np.array(best_bboxes))
+         
         orinialrszd = np.copy(np.asarray(rszd_img))
-        cv2.rectangle(orinialrszd, (bboxA[0], bboxA[1]), (bboxA[2], bboxA[3]), (0,255,0), 1)
+        if isinstance(pick, list) == False:
+            cv2.rectangle(orinialrszd, (pick[0][0], pick[0][1]), (pick[0][2], pick[0][3]), (255,0,0), 1)
 
         plt.imshow(orinialrszd)
         plt.show()
 
         ############ Commented zone #############
-
-        # ss = cv2.ximgproc.segmentation.createSelectiveSearchSegmentation()
-        # ss.setBaseImage(rszd_img.get_img_copy_array())
-        # ss.switchToSelectiveSearchFast()
-        # rects = ss.process()
-        # areas = [rect[2]*rect[3] for rect in rects]
-        # bboxes = [(rect[0], rect[1], rect[0]+rect[2], rect[1]+rect[3]) for rect in rects]
-
-        # best_bboxes = []
-        # for bboxB in bboxes:
-        #     iou = bb_intersection_over_union(bboxA, bboxB)
-            
-        #     if iou > 0.8:
-        #         print(img_file.get_img_file_basename(), iou)
-        #         # cv2.rectangle(orinialrszd, (bboxB[0], bboxB[1]), (bboxB[2], bboxB[3]), (255,0,0), 1)
-        #         best_bboxes.append(bboxB)
-
-        # pick = non_maximum_suppression(np.array(best_bboxes))
-        # print(pick)
-
-        # cv2.rectangle(orinialrszd, (pick[0][0], pick[0][1]), (pick[0][2], pick[0][3]), (255,0,0), 1)
 
         # # for rect in rects:
         # #     area = rect[2]*rect[3]
